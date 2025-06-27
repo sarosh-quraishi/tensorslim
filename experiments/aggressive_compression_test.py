@@ -18,13 +18,12 @@ def test_aggressive_compression():
     # Create larger test matrices (more realistic model sizes)
     torch.manual_seed(42)
     
-    # Larger layers typical in real models
+    # Focus on FFN layers only (attention layers preserved)
     layers = {
-        'BERT FFN (768→3072)': (3072, 768),
-        'BERT FFN (3072→768)': (768, 3072), 
-        'GPT-3 FFN (4096→16384)': (16384, 4096),
-        'GPT-3 FFN (16384→4096)': (4096, 16384),
-        'Large Embedding (50k→1024)': (1024, 50000),
+        'BERT FFN Up (768→3072)': (3072, 768),
+        'BERT FFN Down (3072→768)': (768, 3072), 
+        'GPT-2 FFN Up (1024→4096)': (4096, 1024),
+        'GPT-2 FFN Down (4096→1024)': (1024, 4096),
     }
     
     # Test much more aggressive compression ratios

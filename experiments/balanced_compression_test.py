@@ -131,10 +131,17 @@ def test_practical_model():
         weight = torch.randn(out_dim, in_dim)
         test_inputs = torch.randn(16, in_dim)
         
+        original_params = out_dim * in_dim
+        
         # Use different strategies for different layer types
         if 'attention' in layer_name:
-            # Attention layers - more conservative
-            target_rank = min(out_dim, in_dim) // 3
+            # Skip attention layers completely (preserve them)
+            print(f"{layer_name:<20} {original_params:<10,} {'PRESERVED':<12} {'1.0x':<8} {'1.000':<8}")
+            total_original += original_params
+            total_compressed += original_params  # No compression
+            total_quality += 1.0  # Perfect quality
+            count += 1
+            continue
         else:
             # FFN layers - more aggressive
             target_rank = min(out_dim, in_dim) // 4
@@ -143,7 +150,6 @@ def test_practical_model():
         U, s, Vt = svd.fit_transform(weight, target_rank)
         compressed_weight = svd.reconstruct(U, s, Vt)
         
-        original_params = out_dim * in_dim
         compressed_params = target_rank * (out_dim + in_dim + 1)
         ratio = original_params / compressed_params
         

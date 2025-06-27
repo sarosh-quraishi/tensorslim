@@ -26,34 +26,31 @@ class TransformerSlim:
     including attention-aware compression and layer-specific optimization.
     
     Args:
-        attention_rank: Rank for attention layers (Q, K, V projections)
         ffn_rank: Rank for feed-forward network layers
         output_rank: Rank for output projection layers
         preserve_embeddings: Whether to preserve embedding layers
         preserve_layernorm: Whether to preserve layer normalization
-        attention_strategy: Strategy for compressing attention ('uniform', 'head_aware')
+        preserve_attention: Whether to preserve attention layers (recommended)
         quality_threshold: Minimum quality to maintain
         device: Device for computation
     """
     
     def __init__(
         self,
-        attention_rank: Union[int, float] = 64,
         ffn_rank: Union[int, float] = 128, 
         output_rank: Union[int, float] = 256,
         preserve_embeddings: bool = True,
         preserve_layernorm: bool = True,
-        attention_strategy: str = "uniform",
+        preserve_attention: bool = True,
         quality_threshold: float = 0.95,
         device: Optional[Union[str, torch.device]] = None,
         progress_bar: bool = True
     ):
-        self.attention_rank = attention_rank
         self.ffn_rank = ffn_rank
         self.output_rank = output_rank
         self.preserve_embeddings = preserve_embeddings
         self.preserve_layernorm = preserve_layernorm
-        self.attention_strategy = attention_strategy
+        self.preserve_attention = preserve_attention
         self.quality_threshold = quality_threshold
         self.device = device
         self.progress_bar = progress_bar
@@ -229,6 +226,11 @@ class TransformerSlim:
         if 'layernorm' in layer_name.lower() and self.preserve_layernorm:
             logger.debug(f"Preserving layer norm: {layer_name}")
             return
+            
+        # Skip attention layers as recommended in README
+        if layer_type == 'attention' and self.preserve_attention:
+            logger.debug(f"Skipping attention layer (preserving for quality): {layer_name}")
+            return
         
         # Determine compression rank based on layer type
         rank = self._get_layer_rank(layer_type, layer_module, layer_idx, total_layers)
@@ -242,8 +244,8 @@ class TransformerSlim:
             compressed_layer = convert_layer_to_slim(
                 layer_module,
                 rank=rank,
-                n_power_iterations=2 if layer_type == 'attention' else 1,
-                n_oversamples=15 if layer_type == 'attention' else 10
+                n_power_iterations=1,
+                n_oversamples=10
             )
             
             if compressed_layer is not None:
@@ -276,9 +278,7 @@ class TransformerSlim:
         total_layers: int
     ) -> int:
         """Determine compression rank for specific layer type."""
-        if layer_type == 'attention':
-            base_rank = self.attention_rank
-        elif layer_type == 'ffn':
+        if layer_type == 'ffn':
             base_rank = self.ffn_rank
         elif layer_type == 'output':
             base_rank = self.output_rank
@@ -291,11 +291,8 @@ class TransformerSlim:
             min_dim = min(layer_module.in_features, layer_module.out_features)
             base_rank = max(1, int(min_dim * base_rank))
         
-        # Apply layer-position-based adjustments
-        if self.attention_strategy == "depth_aware":
-            # Compress later layers more aggressively
-            depth_factor = 1.0 - (layer_idx / total_layers) * 0.3
-            base_rank = int(base_rank * depth_factor)
+        # Layer position adjustments can be added here if needed
+        # Currently focused on FFN layers only
         
         # Ensure rank doesn't exceed layer dimensions
         max_rank = min(layer_module.in_features, layer_module.out_features)

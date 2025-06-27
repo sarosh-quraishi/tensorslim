@@ -8,7 +8,7 @@
 
 **Make your models runway-ready** ✨
 
-TensorSlim is a fast, production-ready library for neural network compression using randomized SVD. Achieve **2-2.5x model compression** with **80%+ activation quality** by intelligently compressing Feed-Forward Network layers while preserving attention mechanisms.
+TensorSlim is a fast, production-ready library for neural network compression using randomized SVD. Achieve **1.8x model compression** with **81%+ activation quality** by intelligently compressing Feed-Forward Network layers while preserving attention mechanisms.
 
 ## 🎯 Why TensorSlim?
 
@@ -25,11 +25,13 @@ TensorSlim is a fast, production-ready library for neural network compression us
 
 | Layer Type | Original Size | Compressed Size | Compression Ratio | Activation Quality | Performance |
 |------------|---------------|-----------------|-------------------|-------------------|-------------|
-| BERT FFN Up-projection (3072×768) | 2.36M params | 737K params | 3.2x | 81.6% | Good |
-| BERT FFN Down-projection (768×3072) | 2.36M params | 737K params | 3.2x | 81.3% | Good |
-| GPT-2 FFN Up-projection (4096×1024) | 4.19M params | 1.31M params | 3.2x | 81.9% | Good |
+| BERT FFN Up-projection (3072×768) | 2.36M params | 737K params | 3.2x | 81.0% | Good |
+| BERT FFN Down-projection (768×3072) | 2.36M params | 737K params | 3.2x | 81.4% | Good |
+| GPT-2 FFN Up-projection (4096×1024) | 4.19M params | 1.31M params | 3.2x | 81.7% | Good |
+| **Attention Layers** | **Various** | **PRESERVED** | **1.0x** | **100%** | **Excellent** |
 
-**FFN Performance:** 3.2x compression with 81.6% average activation quality.
+**FFN Performance:** 3.2x compression with 81.4% average activation quality.
+**Overall Model Compression:** ~1.8x (FFN layers compressed, attention layers preserved)
 
 ### ⚠️ Important: Attention Layer Limitations
 
@@ -43,7 +45,7 @@ TensorSlim is a fast, production-ready library for neural network compression us
 **Recommended approach:**
 - **Compress FFN layers aggressively** (3-4x compression with good quality)
 - **Leave attention layers uncompressed** to preserve model performance
-- **Overall model compression: 2-2.5x** (since FFN layers are 60-70% of parameters in most transformers)
+- **Overall model compression: ~1.8x** (since FFN layers are 60-70% of parameters in most transformers)
 
 ### 🎯 Quality Measurement
 
@@ -94,7 +96,7 @@ model = torch.load('my_large_model.pth')
 # Compress with one line
 compressed_model = compress_model(model, compression_ratio=0.8)
 
-# Achieve 2-2.5x model compression by focusing on FFN layers
+# Achieve 1.8x model compression by focusing on FFN layers
 torch.save(compressed_model, 'my_slim_model.pth')
 ```
 
@@ -136,8 +138,8 @@ result = compressor.compress(
 
 # Transformer-specific optimization
 transformer_compressor = TransformerSlim(
-    attention_rank=64,    # Compress attention matrices
     ffn_rank=128,         # Compress feed-forward networks
+    preserve_attention=True,  # Keep attention layers intact (recommended)
     preserve_embeddings=True  # Keep embeddings intact
 )
 
