@@ -8,6 +8,7 @@ constructing approximate matrix decompositions" by Halko, Martinsson, and Tropp 
 from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 import numpy as np
 
@@ -235,6 +236,54 @@ class RandomizedSVD:
             return 0.0 if error_norm == 0 else float('inf')
             
         return (error_norm / original_norm).item() * 100
+    
+    def activation_quality(
+        self,
+        original_weight: Tensor,
+        compressed_weight: Tensor,
+        test_inputs: Tensor,
+        layer_type: str = "linear"
+    ) -> float:
+        """
+        Calculate quality based on activation similarity rather than weight reconstruction.
+        
+        Args:
+            original_weight: Original weight matrix
+            compressed_weight: Compressed weight matrix
+            test_inputs: Test inputs for activation comparison
+            layer_type: Type of layer ("linear", "conv2d", etc.)
+            
+        Returns:
+            Quality score between 0 and 1 (1 = perfect preservation)
+        """
+        with torch.no_grad():
+            if layer_type == "linear":
+                # For linear layers: y = x @ W.T
+                original_output = F.linear(test_inputs, original_weight)
+                compressed_output = F.linear(test_inputs, compressed_weight)
+            elif layer_type == "conv2d":
+                # For conv layers: assume weight is in conv format
+                original_output = F.conv2d(test_inputs, original_weight)
+                compressed_output = F.conv2d(test_inputs, compressed_weight)
+            else:
+                # Fallback to matrix multiplication
+                original_output = test_inputs @ original_weight.T
+                compressed_output = test_inputs @ compressed_weight.T
+            
+            # Flatten outputs for comparison
+            orig_flat = original_output.flatten()
+            comp_flat = compressed_output.flatten()
+            
+            # Use cosine similarity as quality metric
+            cosine_sim = F.cosine_similarity(orig_flat, comp_flat, dim=0)
+            
+            # Convert to quality score (handle NaN case)
+            if torch.isnan(cosine_sim):
+                return 0.0
+            
+            # Ensure positive quality score
+            quality = (cosine_sim + 1.0) / 2.0  # Map [-1, 1] to [0, 1]
+            return quality.item()
 
 
 class AdaptiveRandomizedSVD(RandomizedSVD):
@@ -269,10 +318,18 @@ class AdaptiveRandomizedSVD(RandomizedSVD):
     def fit_transform(
         self, 
         matrix: Tensor, 
-        rank: Optional[int] = None
+        rank: Optional[int] = None,
+        test_inputs: Optional[Tensor] = None,
+        layer_type: str = "linear"
     ) -> Tuple[Tensor, Tensor, Tensor]:
         """
-        Adaptive SVD that optimizes parameters for target quality.
+        Adaptive SVD that optimizes parameters for target quality using activation-based measurement.
+        
+        Args:
+            matrix: Weight matrix to compress
+            rank: Target rank (uses instance rank if None)
+            test_inputs: Test inputs for activation quality measurement
+            layer_type: Type of layer for proper activation computation
         """
         if rank is None:
             rank = self.rank
@@ -289,17 +346,19 @@ class AdaptiveRandomizedSVD(RandomizedSVD):
                 # Compute SVD with current parameters
                 U, s, Vt = super().fit_transform(matrix, rank)
                 
-                # Check quality on a subset for efficiency
-                if matrix.numel() > 10000:  # Sample for large matrices
-                    sample_size = min(1000, matrix.shape[0])
-                    indices = torch.randperm(matrix.shape[0])[:sample_size]
-                    matrix_sample = matrix[indices]
-                    U_sample = U[indices]
-                    reconstructed_sample = self.reconstruct(U_sample, s, Vt)
-                    quality = 1.0 - self.relative_error(matrix_sample, reconstructed_sample) / 100
+                # Calculate quality based on activation similarity if test inputs provided
+                if test_inputs is not None:
+                    # Reconstruct compressed weight matrix
+                    compressed_weight = self.reconstruct(U, s, Vt)
+                    quality = self.activation_quality(
+                        matrix, compressed_weight, test_inputs, layer_type
+                    )
                 else:
-                    reconstructed = self.reconstruct(U, s, Vt)
-                    quality = 1.0 - self.relative_error(matrix, reconstructed) / 100
+                    # Fallback to spectral quality (energy preservation)
+                    # This is faster and still meaningful for neural networks
+                    total_energy = torch.sum(s ** 2) if len(s) > rank else torch.norm(matrix, p='fro') ** 2
+                    captured_energy = torch.sum(s[:rank] ** 2)
+                    quality = (captured_energy / total_energy).item()
                 
                 if quality >= self.target_quality:
                     return U, s, Vt

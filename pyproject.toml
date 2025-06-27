@@ -15,7 +15,7 @@ keywords = [
     "machine-learning",
     "deep-learning", 
     "model-compression",
-    "svd",
+    "randomized-svd",
     "pytorch",
     "transformers",
     "neural-networks"

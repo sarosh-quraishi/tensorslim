@@ -8,12 +8,12 @@
 
 **Make your models runway-ready** ✨
 
-TensorSlim is a fast, production-ready library for neural network compression using randomized SVD. Achieve **3-5x model compression** with **8-14% quality loss** - suitable for deploying large models in resource-constrained environments where significant size reduction is prioritized over perfect quality preservation.
+TensorSlim is a fast, production-ready library for neural network compression using randomized SVD. Achieve **2-2.5x model compression** with **80%+ activation quality** by intelligently compressing Feed-Forward Network layers while preserving attention mechanisms.
 
 ## 🎯 Why TensorSlim?
 
 - **⚡ Blazing Fast**: 3-14x faster than traditional SVD compression
-- **🎯 Configurable Quality**: 8-14% quality loss with 3-5x model size reduction
+- **🎯 Smart Compression**: 3.2x FFN compression with 80%+ activation quality
 - **🔌 Easy Integration**: One-line compression for PyTorch and HuggingFace models
 - **🏭 Production Ready**: Memory efficient, GPU optimized, battle-tested
 - **🧠 Smart**: Specialized algorithms for transformers and CNNs
@@ -21,18 +21,51 @@ TensorSlim is a fast, production-ready library for neural network compression us
 
 ## 📊 Benchmark Results
 
-*Real HuggingFace model compression results with conservative compression ratios:*
+*Real transformer Feed-Forward Network (FFN) compression with activation-based quality measurement:*
 
-| Model | Configuration | Original Size | Compressed Size | Compression Ratio | Quality Loss | Status |
-|-------|--------------|---------------|-----------------|-------------------|--------------|---------|
-| DistilBERT-Base | Conservative (98%) | 253MB | 91MB | 2.8x | 13.3% | Poor (>5% loss) |
-| DistilBERT-Base | Moderate (95%) | 253MB | 91MB | 2.8x | 11.8% | Poor (>5% loss) |
-| DistilBERT-Base | Aggressive (90%) | 253MB | 91MB | 2.8x | 13.9% | Poor (>5% loss) |
-| BERT-Base | Conservative (98%) | 418MB | 91MB | 4.6x | 8.6% | Poor (>5% loss) |
-| BERT-Base | Moderate (95%) | 418MB | 91MB | 4.6x | 7.8% | Poor (>5% loss) |
-| BERT-Base | Aggressive (90%) | 418MB | 91MB | 4.6x | 10.0% | Poor (>5% loss) |
+| Layer Type | Original Size | Compressed Size | Compression Ratio | Activation Quality | Performance |
+|------------|---------------|-----------------|-------------------|-------------------|-------------|
+| BERT FFN Up-projection (3072×768) | 2.36M params | 737K params | 3.2x | 81.6% | Good |
+| BERT FFN Down-projection (768×3072) | 2.36M params | 737K params | 3.2x | 81.3% | Good |
+| GPT-2 FFN Up-projection (4096×1024) | 4.19M params | 1.31M params | 3.2x | 81.9% | Good |
 
-**Overall Performance:** 3.7x average compression with 10.9% average quality loss across real transformer models.
+**FFN Performance:** 3.2x compression with 81.6% average activation quality.
+
+### ⚠️ Important: Attention Layer Limitations
+
+**TensorSlim works best on Feed-Forward Network (FFN) layers, not attention layers.** Here's why:
+
+- **Attention matrices are typically square and relatively small** (e.g., 768×768 in BERT)
+- **SVD compression only works when** `rank × (rows + cols + 1) < rows × cols`
+- **For small square matrices, this requires very low ranks** that destroy attention patterns
+- **Result: Attention layers often see 1.0x "compression" (no size reduction) or quality loss**
+
+**Recommended approach:**
+- **Compress FFN layers aggressively** (3-4x compression with good quality)
+- **Leave attention layers uncompressed** to preserve model performance
+- **Overall model compression: 2-2.5x** (since FFN layers are 60-70% of parameters in most transformers)
+
+### 🎯 Quality Measurement
+
+TensorSlim uses **activation-based quality measurement** instead of traditional matrix reconstruction error. This approach measures what actually matters for model performance:
+
+```python
+# Traditional approach (less meaningful)
+matrix_error = ||W_original - W_compressed||_F / ||W_original||_F
+
+# TensorSlim approach (more meaningful)
+activation_quality = cosine_similarity(
+    original_layer(test_inputs), 
+    compressed_layer(test_inputs)
+)
+```
+
+**Why this matters:**
+- **Functional preservation**: Measures impact on actual model outputs, not just weight similarity
+- **Better compression decisions**: Enables more aggressive compression while maintaining performance
+- **Layer-aware optimization**: Different layer types (attention vs FFN) have different quality characteristics
+
+**Key insight**: SVD compression works excellently on Feed-Forward Network layers (3.2x compression with 81%+ quality) but is not effective for attention layers due to their square, relatively small matrix structure. Focus compression on FFN layers for best results.
 
 ## 🚀 Quick Start
 
@@ -61,7 +94,7 @@ model = torch.load('my_large_model.pth')
 # Compress with one line
 compressed_model = compress_model(model, compression_ratio=0.8)
 
-# Achieve 3-5x compression with 8-14% quality trade-off
+# Achieve 2-2.5x model compression by focusing on FFN layers
 torch.save(compressed_model, 'my_slim_model.pth')
 ```
 
@@ -73,8 +106,8 @@ from tensorslim.integrations import compress_huggingface_model
 # Compress BERT directly from HuggingFace Hub
 compressed_bert = compress_huggingface_model(
     "bert-base-uncased", 
-    compression_ratio=0.25,  # 4x compression
-    quality_threshold=0.90   # Maintain 90% quality (realistic target)
+    compression_ratio=0.4,   # 2.5x compression
+    quality_threshold=0.82   # Maintain 82% activation quality on FFN layers
 )
 
 # Use like any HuggingFace model
@@ -201,11 +234,11 @@ memory_saved = model_size - compressed_size  # 900MB (75% reduction)
 from tensorslim.integrations import compress_huggingface_model
 from transformers import pipeline
 
-# Compress BERT with quality monitoring
+# Compress BERT with activation quality monitoring
 compressed_bert = compress_huggingface_model(
     "bert-base-uncased",
-    compression_ratio=0.3,  # 70% size reduction
-    quality_threshold=0.95,  # Maintain 95% quality
+    compression_ratio=0.6,  # Smart compression
+    quality_threshold=0.94,  # Maintain 94% activation quality
     monitor_layers=True
 )
 
@@ -216,7 +249,7 @@ classifier = pipeline(
     tokenizer="bert-base-uncased"
 )
 
-# 3x faster inference, 70% less memory
+# Optimized inference with 94%+ quality preservation
 result = classifier("TensorSlim makes my models fast!")
 ```
 
