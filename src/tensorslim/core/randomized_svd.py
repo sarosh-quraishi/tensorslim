@@ -3,6 +3,8 @@ Fast randomized SVD implementation for neural network compression.
 
 Based on "Finding structure with randomness: Probabilistic algorithms for
 constructing approximate matrix decompositions" by Halko, Martinsson, and Tropp (2011).
+
+Now enhanced with SRHT and whitening support for improved efficiency and accuracy.
 """
 
 from typing import Optional, Tuple, Union
@@ -11,6 +13,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import numpy as np
+import logging
+
+from .srht_utils import SRHTOperator, srht_range_finder
+from .whitening import DataWhitener, WhitenedSVD, create_calibration_dataset
+
+logger = logging.getLogger(__name__)
 
 
 class RandomizedSVD:
@@ -20,12 +28,18 @@ class RandomizedSVD:
     This implementation is optimized for neural network weight matrices and provides
     10-100x speedup over standard SVD while maintaining high accuracy.
     
+    Now enhanced with SRHT and whitening support for improved efficiency and accuracy.
+    
     Args:
         rank: Target rank for the low-rank approximation
         n_oversamples: Number of additional samples for stability (default: 10)
         n_power_iterations: Number of power iterations for accuracy (default: 2)
         random_state: Random seed for reproducibility
         device: Device to perform computations on
+        use_srht: Whether to use SRHT instead of Gaussian matrices (default: True)
+        use_whitening: Whether to use data whitening (default: False)
+        whitening_dataset: Dataset name for whitening ("wikitext2", "random")
+        n_calibration_samples: Number of calibration samples for whitening
     """
     
     def __init__(
@@ -34,13 +48,25 @@ class RandomizedSVD:
         n_oversamples: int = 10,
         n_power_iterations: int = 2,
         random_state: Optional[int] = None,
-        device: Optional[Union[str, torch.device]] = None
+        device: Optional[Union[str, torch.device]] = None,
+        use_srht: bool = True,
+        use_whitening: bool = False,
+        whitening_dataset: str = "wikitext2",
+        n_calibration_samples: int = 256
     ):
         self.rank = rank
         self.n_oversamples = n_oversamples
         self.n_power_iterations = n_power_iterations
         self.random_state = random_state
         self.device = device
+        self.use_srht = use_srht
+        self.use_whitening = use_whitening
+        self.whitening_dataset = whitening_dataset
+        self.n_calibration_samples = n_calibration_samples
+        
+        # Initialize whitening components if needed
+        self._whitener = None
+        self._whitened_svd = None
         
         if random_state is not None:
             torch.manual_seed(random_state)
@@ -69,14 +95,18 @@ class RandomizedSVD:
     def fit_transform(
         self, 
         matrix: Tensor, 
-        rank: Optional[int] = None
+        rank: Optional[int] = None,
+        calibration_data: Optional[Tensor] = None,
+        layer: Optional[nn.Linear] = None
     ) -> Tuple[Tensor, Tensor, Tensor]:
         """
-        Compute randomized SVD decomposition.
+        Compute randomized SVD decomposition with optional whitening.
         
         Args:
-            matrix: Input matrix to decompose
+            matrix: Input matrix to decompose (or layer weight matrix)
             rank: Target rank (uses instance rank if None)
+            calibration_data: Optional calibration data for whitening
+            layer: Optional layer for whitening (if matrix is from a layer)
             
         Returns:
             Low-rank SVD decomposition (U, s, Vt)
@@ -94,8 +124,55 @@ class RandomizedSVD:
         if rank > min(matrix.shape):
             # Clamp rank to maximum possible instead of raising error
             rank = min(matrix.shape)
-            print(f"Warning: Rank clamped to {rank} for matrix shape {matrix.shape}")
-            
+            logger.warning(f"Rank clamped to {rank} for matrix shape {matrix.shape}")
+        
+        # Use whitening if enabled and we have a layer
+        if self.use_whitening and layer is not None:
+            return self._fit_transform_whitened(matrix, rank, calibration_data, layer)
+        else:
+            # Standard randomized SVD
+            return self._fit_transform_standard(matrix, rank)
+    
+    def _fit_transform_whitened(
+        self,
+        matrix: Tensor,
+        rank: int,
+        calibration_data: Optional[Tensor],
+        layer: nn.Linear
+    ) -> Tuple[Tensor, Tensor, Tensor]:
+        """Apply whitened SVD compression."""
+        # Initialize whitener if needed
+        if self._whitener is None:
+            # Try to create calibration dataset
+            try:
+                dataset = create_calibration_dataset(
+                    self.whitening_dataset,
+                    hidden_dim=layer.in_features,
+                    device=self.device
+                )
+                self._whitener = DataWhitener(
+                    calibration_dataset=dataset,
+                    n_calibration_samples=self.n_calibration_samples,
+                    device=self.device
+                )
+                self._whitened_svd = WhitenedSVD(self._whitener, use_whitening=True)
+            except Exception as e:
+                logger.warning(f"Failed to initialize whitening: {e}, falling back to standard SVD")
+                return self._fit_transform_standard(matrix, rank)
+        
+        # Apply whitened SVD
+        U, s, Vt, whitening_inv = self._whitened_svd.compress_layer(
+            layer, rank, calibration_data
+        )
+        
+        return U, s, Vt
+    
+    def _fit_transform_standard(
+        self,
+        matrix: Tensor,
+        rank: int
+    ) -> Tuple[Tensor, Tensor, Tensor]:
+        """Apply standard randomized SVD."""
         # Choose algorithm based on matrix orientation
         if matrix.shape[0] >= matrix.shape[1]:
             return self._randomized_svd_tall(matrix, rank)
@@ -153,6 +230,20 @@ class RandomizedSVD:
         """
         m, n = matrix.shape
         
+        if self.use_srht:
+            # Use SRHT for more efficient range finding
+            try:
+                Q = srht_range_finder(
+                    matrix, 
+                    size - self.n_oversamples,  # Account for oversampling in SRHT
+                    oversampling=self.n_oversamples,
+                    n_iterations=self.n_power_iterations
+                )
+                return Q
+            except Exception as e:
+                logger.warning(f"SRHT range finding failed: {e}, falling back to Gaussian")
+        
+        # Fallback to standard Gaussian range finding
         # Generate random test matrix
         Omega = torch.randn(n, size, device=matrix.device, dtype=matrix.dtype)
         
@@ -382,10 +473,13 @@ def randomized_svd(
     rank: int,
     n_oversamples: int = 10,
     n_power_iterations: int = 2,
-    random_state: Optional[int] = None
+    random_state: Optional[int] = None,
+    use_srht: bool = True,
+    use_whitening: bool = False,
+    layer: Optional[nn.Linear] = None
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """
-    Convenience function for randomized SVD.
+    Convenience function for randomized SVD with SRHT and whitening support.
     
     Args:
         matrix: Input matrix to decompose
@@ -393,6 +487,9 @@ def randomized_svd(
         n_oversamples: Number of additional samples for stability
         n_power_iterations: Number of power iterations for accuracy
         random_state: Random seed for reproducibility
+        use_srht: Whether to use SRHT instead of Gaussian matrices
+        use_whitening: Whether to use data whitening
+        layer: Layer for whitening (required if use_whitening=True)
         
     Returns:
         SVD decomposition (U, s, Vt)
@@ -401,10 +498,12 @@ def randomized_svd(
         rank=rank,
         n_oversamples=n_oversamples,
         n_power_iterations=n_power_iterations,
-        random_state=random_state
+        random_state=random_state,
+        use_srht=use_srht,
+        use_whitening=use_whitening
     )
     
-    return svd.fit_transform(matrix)
+    return svd.fit_transform(matrix, layer=layer)
 
 
 def estimate_rank(

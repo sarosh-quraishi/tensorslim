@@ -396,6 +396,8 @@ class SlimEmbedding(nn.Module):
 def convert_layer_to_slim(
     layer: nn.Module,
     rank: Union[int, float] = 0.5,
+    use_srht: bool = True,
+    use_whitening: bool = False,
     **svd_kwargs
 ) -> Optional[nn.Module]:
     """
@@ -404,6 +406,8 @@ def convert_layer_to_slim(
     Args:
         layer: PyTorch layer to compress
         rank: Compression rank (int) or ratio (float)
+        use_srht: Whether to use SRHT instead of Gaussian matrices
+        use_whitening: Whether to use data whitening
         **svd_kwargs: Additional arguments for SVD computation
         
     Returns:
@@ -421,8 +425,15 @@ def convert_layer_to_slim(
         else:
             target_rank = min(rank, min(weight.shape))
         
-        # Compute SVD
-        U, s, Vt = randomized_svd(weight, target_rank, **svd_kwargs)
+        # Compute SVD with new features
+        U, s, Vt = randomized_svd(
+            weight, 
+            target_rank, 
+            use_srht=use_srht,
+            use_whitening=use_whitening,
+            layer=layer if use_whitening else None,
+            **svd_kwargs
+        )
         
         return SlimLinear(U, s, Vt, bias, weight.shape)
         
@@ -441,8 +452,14 @@ def convert_layer_to_slim(
         else:
             target_rank = min(rank, min(weight_2d.shape))
         
-        # Compute SVD
-        U, s, Vt = randomized_svd(weight_2d, target_rank, **svd_kwargs)
+        # Compute SVD (note: whitening not typically used for conv layers)
+        U, s, Vt = randomized_svd(
+            weight_2d, 
+            target_rank, 
+            use_srht=use_srht,
+            use_whitening=False,  # Whitening less common for conv
+            **svd_kwargs
+        )
         
         return SlimConv2d(
             U=U, s=s, Vt=Vt, bias=bias,
@@ -464,8 +481,14 @@ def convert_layer_to_slim(
         else:
             target_rank = min(rank, min(weight.shape))
         
-        # Compute SVD
-        U, s, Vt = randomized_svd(weight, target_rank, **svd_kwargs)
+        # Compute SVD (note: whitening less common for embeddings)
+        U, s, Vt = randomized_svd(
+            weight, 
+            target_rank, 
+            use_srht=use_srht,
+            use_whitening=False,  # Whitening less common for embeddings
+            **svd_kwargs
+        )
         
         return SlimEmbedding(
             U=U, s=s, Vt=Vt,
