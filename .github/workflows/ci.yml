@@ -1,0 +1,287 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        exclude:
+          # Reduce matrix size for faster CI
+          - os: windows-latest
+            python-version: "3.8"
+          - os: windows-latest
+            python-version: "3.9"
+          - os: macos-latest
+            python-version: "3.8"
+          - os: macos-latest
+            python-version: "3.9"
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+
+    - name: Set up Python ${{ matrix.python-version }}
+      run: uv python install ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra dev --extra benchmark
+
+    - name: Lint with flake8
+      run: |
+        uv run flake8 src/tensorslim tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        uv run flake8 src/tensorslim tests/ --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+
+    - name: Check code formatting with black
+      run: |
+        uv run black --check src/tensorslim tests/
+
+    - name: Check import sorting with isort
+      run: |
+        uv run isort --check-only src/tensorslim tests/
+
+    - name: Type check with mypy
+      run: |
+        uv run mypy src/tensorslim --ignore-missing-imports
+
+    - name: Test with pytest
+      run: |
+        uv run pytest tests/ --cov=tensorslim --cov-report=xml --cov-report=term-missing -v
+
+    - name: Upload coverage to Codecov
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  test-optional-dependencies:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11"]
+        extras: ["huggingface", "benchmark", "all"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      run: uv python install ${{ matrix.python-version }}
+
+    - name: Install with ${{ matrix.extras }} extras
+      run: |
+        uv sync --extra ${{ matrix.extras }} --extra dev
+
+    - name: Test core functionality
+      run: |
+        uv run pytest tests/test_core.py -v
+
+    - name: Test integrations (if applicable)
+      if: matrix.extras == 'huggingface' || matrix.extras == 'all'
+      run: |
+        uv run pytest tests/test_integrations.py -v -k "not huggingface or huggingface"
+
+  benchmark:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra benchmark --extra dev
+
+    - name: Run performance benchmarks
+      run: |
+        cd benchmarks
+        uv run python speed_comparison.py --output benchmark_results.json
+        uv run python quality_analysis.py --output quality_results.json
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results
+        path: benchmarks/*_results.json
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra dev
+
+    - name: Run security checks with bandit
+      run: |
+        uv run bandit -r src/tensorslim/ -f json -o bandit-report.json
+      continue-on-error: true
+
+    - name: Upload security report
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-report
+        path: bandit-report.json
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra dev
+
+    - name: Check documentation
+      run: |
+        # Check that all public functions have docstrings
+        uv run python -c "
+        import ast
+        import sys
+        from pathlib import Path
+
+        def check_docstrings(file_path):
+            with open(file_path, 'r') as f:
+                tree = ast.parse(f.read())
+            
+            missing_docs = []
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                    if not node.name.startswith('_'):  # Public functions/classes
+                        if not ast.get_docstring(node):
+                            missing_docs.append(f'{file_path}:{node.lineno} - {node.name}')
+            
+            return missing_docs
+
+        all_missing = []
+        for py_file in Path('src/tensorslim').rglob('*.py'):
+            if py_file.name != '__init__.py':
+                missing = check_docstrings(py_file)
+                all_missing.extend(missing)
+
+        if all_missing:
+            print('Missing docstrings:')
+            for item in all_missing:
+                print(f'  {item}')
+            sys.exit(1)
+        else:
+            print('All public functions and classes have docstrings!')
+        "
+
+  compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        torch-version: ["1.12.0", "1.13.0", "2.0.0", "2.1.0", "2.2.0"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.10
+      run: uv python install 3.10
+
+    - name: Install PyTorch ${{ matrix.torch-version }}
+      run: |
+        uv add torch==${{ matrix.torch-version }}
+        uv sync --extra dev
+
+    - name: Test core functionality
+      run: |
+        uv run pytest tests/test_core.py::TestRandomizedSVD::test_basic_svd -v
+        uv run pytest tests/test_core.py::TestSlimLinear::test_slim_linear_forward -v
+
+  gpu-test:
+    runs-on: [self-hosted, gpu]  # Requires self-hosted GPU runner
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install dependencies with CUDA
+      run: |
+        uv sync --extra dev
+        # Install PyTorch with CUDA support
+        uv add torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+    - name: Test GPU functionality
+      run: |
+        uv run pytest tests/ -v -m gpu --tb=short
+      env:
+        CUDA_VISIBLE_DEVICES: "0"
+
+  release-test:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [test, test-optional-dependencies, security]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra dev
+
+    - name: Build package
+      run: |
+        uv build
+
+    - name: Test installation from wheel
+      run: |
+        uv pip install dist/*.whl
+        python -c "import tensorslim; print(f'TensorSlim {tensorslim.__version__} installed successfully')"
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: dist
+        path: dist/

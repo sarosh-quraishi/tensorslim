@@ -1,0 +1,106 @@
+TensorSlim Speed Comparison Benchmark Report
+==================================================
+
+Matrix SVD Benchmarks
+------------------------------
+
+Matrix Size: 500x500, Rank: 50
+  Standard SVD: 0.0225s ± 0.0020s
+    Reconstruction Error: 1.141055
+  Randomized SVD: 0.0038s ± 0.0004s
+    Reconstruction Error: 0.842174
+    Speedup: 5.88x
+  Adaptive SVD: 0.0950s ± 0.0017s
+    Reconstruction Error: 0.830575
+    Speedup: 0.24x
+
+Matrix Size: 500x500, Rank: 100
+  Standard SVD: 0.0213s ± 0.0006s
+    Reconstruction Error: 1.234544
+  Randomized SVD: 0.0070s ± 0.0003s
+    Reconstruction Error: 0.699790
+    Speedup: 3.03x
+  Adaptive SVD: 0.1667s ± 0.0074s
+    Reconstruction Error: 0.683575
+    Speedup: 0.13x
+
+Matrix Size: 1000x1000, Rank: 50
+  Standard SVD: 0.1108s ± 0.0020s
+    Reconstruction Error: 1.083123
+  Randomized SVD: 0.0080s ± 0.0008s
+    Reconstruction Error: 0.920347
+    Speedup: 13.91x
+  Adaptive SVD: 0.2266s ± 0.0005s
+    Reconstruction Error: 0.912282
+    Speedup: 0.49x
+
+Matrix Size: 1000x1000, Rank: 100
+  Standard SVD: 0.1026s ± 0.0023s
+    Reconstruction Error: 1.146031
+  Randomized SVD: 0.0165s ± 0.0013s
+    Reconstruction Error: 0.844220
+    Speedup: 6.24x
+  Adaptive SVD: 0.3935s ± 0.0004s
+    Reconstruction Error: 0.831314
+    Speedup: 0.26x
+
+
+Model Compression Benchmarks
+------------------------------
+
+Model: Small
+Original Parameters: 41,802
+
+  Compression Ratio: 0.25
+    Time: 0.0083s ± 0.0005s
+    Actual Ratio: 206.94x
+    Parameter Reduction: 99.5%
+
+  Compression Ratio: 0.5
+    Time: 0.0075s ± 0.0004s
+    Actual Ratio: 206.94x
+    Parameter Reduction: 99.5%
+
+  Compression Ratio: 0.75
+    Time: 0.0078s ± 0.0000s
+    Actual Ratio: 206.94x
+    Parameter Reduction: 99.5%
+
+Model: Medium
+Original Parameters: 173,130
+
+  Compression Ratio: 0.25
+    Time: 0.0189s ± 0.0003s
+    Actual Ratio: 378.01x
+    Parameter Reduction: 99.7%
+
+  Compression Ratio: 0.5
+    Time: 0.0190s ± 0.0009s
+    Actual Ratio: 378.01x
+    Parameter Reduction: 99.7%
+
+  Compression Ratio: 0.75
+    Time: 0.0188s ± 0.0012s
+    Actual Ratio: 378.01x
+    Parameter Reduction: 99.7%
+
+Model: Large
+Original Parameters: 697,930
+
+  Compression Ratio: 0.25
+    Time: 0.0701s ± 0.0030s
+    Actual Ratio: 719.52x
+    Parameter Reduction: 99.9%
+
+  Compression Ratio: 0.5
+    Time: 0.0816s ± 0.0070s
+    Actual Ratio: 719.52x
+    Parameter Reduction: 99.9%
+
+  Compression Ratio: 0.75
+    Time: 0.0896s ± 0.0047s
+    Actual Ratio: 719.52x
+    Parameter Reduction: 99.9%
+
+
+Benchmark completed successfully!

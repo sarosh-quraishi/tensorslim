@@ -1,0 +1,214 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra dev --extra all
+
+    - name: Run tests
+      run: |
+        uv run pytest tests/ --cov=tensorslim -v
+
+    - name: Lint and format check
+      run: |
+        uv run flake8 src/tensorslim
+        uv run black --check src/tensorslim
+        uv run isort --check-only src/tensorslim
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install build dependencies
+      run: |
+        uv sync
+
+    - name: Build package
+      run: |
+        uv build
+
+    - name: Check build
+      run: |
+        uv run twine check dist/*
+
+    - uses: actions/upload-artifact@v3
+      with:
+        name: dist
+        path: dist/
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write  # For trusted publishing
+    steps:
+    - uses: actions/download-artifact@v3
+      with:
+        name: dist
+        path: dist/
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        skip-existing: true
+
+  create-release:
+    needs: [build, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra dev
+
+    - name: Generate changelog
+      run: |
+        # Get the tag name
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+        
+        # Generate changelog from git log
+        echo "# Release $TAG_NAME" > CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        
+        # Get commits since last tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -n "$PREV_TAG" ]; then
+          echo "## Changes since $PREV_TAG" >> CHANGELOG.md
+          git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> CHANGELOG.md
+        else
+          echo "## Changes" >> CHANGELOG.md
+          git log --pretty=format:"- %s (%h)" HEAD >> CHANGELOG.md
+        fi
+        
+        echo "" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "## Installation" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "\`\`\`bash" >> CHANGELOG.md
+        echo "# Install with uv (recommended)" >> CHANGELOG.md
+        echo "uv add tensorslim" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "# Or with pip" >> CHANGELOG.md
+        echo "pip install tensorslim" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "# With HuggingFace integration" >> CHANGELOG.md
+        echo "uv add tensorslim[huggingface]" >> CHANGELOG.md
+        echo "\`\`\`" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "## Quick Start" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "\`\`\`python" >> CHANGELOG.md
+        echo "import torch" >> CHANGELOG.md
+        echo "from tensorslim import compress_model" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "# Load your model" >> CHANGELOG.md
+        echo "model = torch.load('my_model.pth')" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "# Compress with one line" >> CHANGELOG.md
+        echo "compressed_model = compress_model(model, compression_ratio=0.5)" >> CHANGELOG.md
+        echo "\`\`\`" >> CHANGELOG.md
+
+    - uses: actions/download-artifact@v3
+      with:
+        name: dist
+        path: dist/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        name: TensorSlim ${{ env.TAG_NAME }}
+        body_path: CHANGELOG.md
+        files: |
+          dist/*.tar.gz
+          dist/*.whl
+        draft: false
+        prerelease: ${{ contains(env.TAG_NAME, 'alpha') || contains(env.TAG_NAME, 'beta') || contains(env.TAG_NAME, 'rc') }}
+
+  update-docs:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Set up Python 3.11
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: |
+        uv sync --extra dev
+
+    - name: Update version badge
+      run: |
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        VERSION=${TAG_NAME#v}
+        
+        # Update README badge
+        sed -i "s/badge\/version-[^-]*-blue/badge\/version-$VERSION-blue/g" README.md
+
+    - name: Commit version update
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add README.md
+        git diff --staged --quiet || git commit -m "Update version badge to ${{ env.TAG_NAME }}"
+        git push
+
+  notify:
+    needs: [publish-pypi, create-release]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Notify on success
+      if: needs.publish-pypi.result == 'success' && needs.create-release.result == 'success'
+      run: |
+        echo "🎉 TensorSlim ${{ github.ref_name }} released successfully!"
+        echo "📦 Available on PyPI: https://pypi.org/project/tensorslim/"
+        echo "📋 Release notes: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+
+    - name: Notify on failure
+      if: needs.publish-pypi.result == 'failure' || needs.create-release.result == 'failure'
+      run: |
+        echo "❌ Release failed for TensorSlim ${{ github.ref_name }}"
+        echo "Check the workflow logs for details."
+        exit 1
