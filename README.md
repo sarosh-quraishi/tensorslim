@@ -6,7 +6,7 @@
 [![Tests](https://github.com/tensorslim/tensorslim/workflows/Tests/badge.svg)](https://github.com/tensorslim/tensorslim/actions)
 [![Coverage](https://codecov.io/gh/tensorslim/tensorslim/branch/main/graph/badge.svg)](https://codecov.io/gh/tensorslim/tensorslim)
 
-**Make your models runway-ready** ✨
+**This is a work in progress** ✨
 
 TensorSlim is a fast, production-ready library for neural network compression using randomized SVD. Achieve **2-2.5x model compression** with **80%+ activation quality** by intelligently compressing Feed-Forward Network layers while preserving attention mechanisms.
 
