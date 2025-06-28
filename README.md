@@ -8,7 +8,7 @@
 
 **This is a work in progress** ✨
 
-TensorSlim is a fast, production-ready library for neural network compression using randomized SVD. Achieve **2-2.5x model compression** with **80%+ activation quality** by intelligently compressing Feed-Forward Network layers while preserving attention mechanisms.
+TensorSlim is a fast, experimental library for neural network compression using randomized SVD. Achieve **2-2.5x model compression** with **80%+ activation quality** by intelligently compressing Feed-Forward Network layers while preserving attention mechanisms.
 
 ## 🎯 Why TensorSlim?
 
