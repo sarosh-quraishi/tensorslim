@@ -15,7 +15,6 @@ TensorSlim is a fast, experimental library for neural network compression using 
 - **⚡ Blazing Fast**: 3-14x faster than traditional SVD compression
 - **🎯 Smart Compression**: 3.2x FFN compression with 80%+ activation quality
 - **🔌 Easy Integration**: One-line compression for PyTorch and HuggingFace models
-- **🏭 Production Ready**: Memory efficient, GPU optimized, battle-tested
 - **🧠 Smart**: Specialized algorithms for transformers and CNNs
 - **📦 Lightweight**: Minimal dependencies, maximum performance
 
